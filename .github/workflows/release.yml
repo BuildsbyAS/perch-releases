@@ -1,0 +1,115 @@
+# Builds Perch from the private BuildsbyAS/perch repo, signs it, and publishes
+# a release here. Every installed copy of Perch checks this repo's latest
+# appcast.xml hourly (and whenever the island opens) and offers the update.
+#
+# Run it from the Actions tab or the GitHub mobile app: Release Perch → Run workflow.
+name: Release Perch
+run-name: Perch ${{ inputs.version }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, e.g. 0.2.0 (must be higher than the last release)"
+        required: true
+        type: string
+      notes:
+        description: "What's new, shown in the update window. Use \\n for new lines and '- ' for bullets."
+        required: false
+        type: string
+      ref:
+        description: "Branch, tag or commit of BuildsbyAS/perch to build"
+        required: false
+        default: main
+        type: string
+      critical:
+        description: "Critical update (Sparkle shows it prominently)"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check the version
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "::error::Version must look like 0.2.0"; exit 1
+          fi
+          if gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::v$VERSION is already released. Pick a higher version."; exit 1
+          fi
+
+      - name: Check out Perch
+        uses: actions/checkout@v4
+        with:
+          repository: BuildsbyAS/perch
+          ref: ${{ inputs.ref }}
+          ssh-key: ${{ secrets.SOURCE_DEPLOY_KEY }}
+          path: perch
+
+      - name: Import the signing certificate
+        env:
+          P12: ${{ secrets.SIGNING_CERT_P12 }}
+          P12_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          PASSWORD="$(openssl rand -hex 24)"
+          security create-keychain -p "$PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings "$KEYCHAIN"
+          security unlock-keychain -p "$PASSWORD" "$KEYCHAIN"
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          echo "SIGNING_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+
+      - name: Prepare the update key and notes
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          umask 077
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle.key"
+          printf '%b\n' "${NOTES:-Perch $VERSION}" > "$RUNNER_TEMP/notes.md"
+          echo "SPARKLE_KEY_FILE=$RUNNER_TEMP/sparkle.key" >> "$GITHUB_ENV"
+          echo "RELEASE_NOTES_FILE=$RUNNER_TEMP/notes.md" >> "$GITHUB_ENV"
+
+      - name: Build, sign and package
+        working-directory: perch
+        env:
+          CODE_SIGN_IDENTITY: Perch Self-Signed
+          DOWNLOAD_URL_PREFIX: https://github.com/${{ github.repository }}/releases/download/v${{ inputs.version }}/
+          CRITICAL: ${{ inputs.critical && '1' || '' }}
+        run: |
+          swift --version
+          # Build numbers only ever increase, which is what Sparkle compares.
+          ./release.sh "$VERSION" "$(date -u +%Y%m%d%H%M)"
+
+      - name: Publish the release
+        run: |
+          gh release create "v$VERSION" \
+            perch/.build/release/Perch-$VERSION.zip \
+            perch/.build/release/Perch.dmg \
+            perch/.build/release/appcast.xml \
+            --repo "$GITHUB_REPOSITORY" --title "Perch $VERSION" \
+            --notes-file "$RELEASE_NOTES_FILE" --latest
+
+      - name: Clean up secrets
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/sparkle.key"
+          [[ -n "${SIGNING_KEYCHAIN:-}" ]] && security delete-keychain "$SIGNING_KEYCHAIN" || true
