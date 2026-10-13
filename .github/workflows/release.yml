@@ -53,7 +53,7 @@ jobs:
           fi
 
       - name: Check out Perch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: BuildsbyAS/perch
           ref: ${{ inputs.ref }}
