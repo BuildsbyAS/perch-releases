@@ -6,9 +6,17 @@ Builds of [Perch](https://github.com/BuildsbyAS/perch), the transit layer of you
 
 ## Installing
 
-1. Open `Perch.dmg` and drag **Perch** onto **Applications**.
-2. Open Perch from Applications. The first time, macOS says it can't verify the developer: open **System Settings → Privacy & Security**, scroll down, click **Open Anyway** next to Perch, and confirm.
-3. After that, updates install themselves: when one is ready, click **Update to …** in the island or the menu bar icon.
+Paste this in Terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/BuildsbyAS/perch-releases/main/install.sh | sh
+```
+
+It downloads the latest Perch, checks it's signed with Perch's certificate, puts it in Applications and opens it. Run it again any time to reinstall. Requires an Apple Silicon Mac on macOS 14 or later.
+
+Prefer the disk image? Open `Perch.dmg` and drag **Perch** onto **Applications**. Perch isn't notarized yet, so the first time macOS says it can't verify it: click **Done**, open **System Settings → Privacy & Security**, scroll down, click **Open Anyway**, and confirm.
+
+After that, updates install themselves: when one is ready, click **Update to …** in the island or the menu bar icon.
 
 ## Publishing an update
 
